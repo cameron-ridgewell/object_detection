@@ -77,7 +77,7 @@ public:
       CV_LOAD_IMAGE_COLOR);
     
     //Canny detection
-    edge_detection(cv_ptr->image, 0);
+    edge_detection(cv_ptr->image, 17);
 
     // Update GUI Window
     //cv::imshow(OPENCV_WINDOW, cv_ptr->image);
@@ -133,12 +133,13 @@ public:
   static void CannyThreshold(int, void*)
   {
     cv::Mat element5(5,5,CV_8U,cv::Scalar(1));
-    cv::blur( src_gray, detected_edges, cv::Size(op,op) );
+    cv::blur( src_gray, detected_edges, cv::Size(3,3) );
     cv::GaussianBlur(src_gray, detected_edges, cv::Size(13, 13), 0, 0 );
+    //::medianBlur()
 
-    //cv::morphologyEx(detected_edges, detected_edges, cv::MORPH_BLACKHAT, element5);
+    cv::morphologyEx(detected_edges, detected_edges, cv::MORPH_OPEN, element5);
     //cv::morphologyEx(detected_edges, detected_edges, cv::MORPH_OPEN, element5);
-    cv::fastNlMeansDenoising(detected_edges, detected_edges);
+    //cv::fastNlMeansDenoising(detected_edges, detected_edges);
     /// Canny detector
     cv::Canny( detected_edges, detected_edges, lowThreshold, 
       ratio*lowThreshold, kernel_size );
@@ -159,7 +160,7 @@ public:
     //line detection
     
     std::vector<cv::Vec4i> lines;
-    cv::HoughLinesP(useful, lines, 1, CV_PI/180, 90, 50, 10);
+    cv::HoughLinesP(useful, lines, 1, CV_PI/180, 50, 50, 10);
     cv::Point prev1;
     cv::Point prev2;
     for (size_t i = 0; i < lines.size() && i < 4; i++)
