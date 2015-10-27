@@ -15,6 +15,8 @@ cv_bridge/cv_bridge.h
 -
 sensor_msgs/image_encodings.h
 -
+boost/utility.hpp
+-
 opencv2/imgproc/imgproc.hpp
 -
 opencv2/highgui/highgui.hpp

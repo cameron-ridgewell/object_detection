@@ -2,6 +2,7 @@
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
 #include <sensor_msgs/image_encodings.h>
+#include <boost/utility.hpp>
 
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/highgui/highgui.hpp>
@@ -13,11 +14,12 @@
 
 //CV_Bridge Variables
 static const std::string OPENCV_WINDOW = "Image window";
-static const std::string CAMERA_TOPIC = "/rgb/image"; //"/usb_cam/image_raw";
+static const std::string CAMERA_TOPIC = "/usb_cam/image_raw"; //"/rgb/image"; 
 
 //Canny Variables
 cv::Mat src, src_gray;
 cv::Mat dst, detected_edges;
+std::list<cv::Mat> old_edges;
 int edgeThresh = 1;
 int lowThreshold;
 int const max_lowThreshold = 150;
@@ -29,6 +31,7 @@ std::string window_name = "Edge Map";
 
 //HoughLines Variables
 int rho, theta, hthresh, mll, mlg;
+const int EDGE_HISTORY = 5;
 
 class ImageConverter
 {
@@ -36,6 +39,11 @@ class ImageConverter
   image_transport::ImageTransport it_;
   image_transport::Subscriber image_sub_;
   image_transport::Publisher image_pub_;
+
+struct Line {
+  cv::Point point1;
+  cv::Point point2;
+};
   
 public:
   ImageConverter()
@@ -46,6 +54,7 @@ public:
       &ImageConverter::imageCb, this);
     image_pub_ = it_.advertise("/image_converter/output_video", 1);
     cv::namedWindow(OPENCV_WINDOW, CV_WINDOW_AUTOSIZE);
+
   }
 
   ~ImageConverter()
@@ -77,7 +86,7 @@ public:
       CV_LOAD_IMAGE_COLOR);
     
     //Canny detection
-    edge_detection(cv_ptr->image, 17);
+    edge_detection(cv_ptr->image, 0);
 
     // Update GUI Window
     //cv::imshow(OPENCV_WINDOW, cv_ptr->image);
@@ -101,7 +110,7 @@ public:
     /// Create a Trackbar for user to enter threshold
     if (threshold == 0) {
       cv::createTrackbar( "Min Threshold:", window_name, &lowThreshold, 
-        max_lowThreshold, CannyThreshold );
+        max_lowThreshold, Solver );
     } 
     else
     {
@@ -120,17 +129,22 @@ public:
     //45 seems to get just about everything
 
     /// Show the image
-    CannyThreshold(0, 0);
-
+    //CannyThreshold(0, 0);
+    Solver(0,0);
     /// Wait until user exit program by pressing a key
     cv::waitKey(3);
+  }
+
+  static void Solver(int, void*)
+  {
+    LineDetection(CannyThreshold(0,0));
   }
 
 /**
  * @function CannyThreshold
  * @brief Trackbar callback - Canny thresholds input with a ratio 1:3
  */
-  static void CannyThreshold(int, void*)
+  static cv::Mat CannyThreshold(int, void*)
   {
     cv::Mat element5(5,5,CV_8U,cv::Scalar(1));
     cv::blur( src_gray, detected_edges, cv::Size(3,3) );
@@ -154,19 +168,63 @@ public:
     dst = cv::Scalar::all(0);
     src.copyTo(dst, detected_edges);
 
-    cv::Mat useful;
-    cv::cvtColor(dst, useful, CV_BGR2GRAY);
+    //cv::Mat useful;
+    //cv::cvtColor(dst, useful, CV_BGR2GRAY);
     
     //line detection
-    
+    return detected_edges;
+  }
+
+/**
+ * @function LineDetection
+ * @brief use edge history and Hough Line Detector to find image lines
+ */
+  static void LineDetection(cv::Mat edges) 
+  {
+    //Create edge history of EDGE_HISTORY number of frames combined
+    cv::Mat filteredEdges = edges.clone();
+    std::vector<cv::Mat> temps;
+    if (old_edges.size() == EDGE_HISTORY)
+    {
+      for (int i = 0; i < old_edges.size(); i++)
+      {
+        cv::Mat temp;
+        cv::threshold(*boost::next(old_edges.begin(),i), temp, 100, 255, cv::THRESH_BINARY);
+        temps.push_back(temp);
+      }
+      cv::Mat binImage;
+      cv::threshold(edges, binImage, 100, 255, cv::THRESH_BINARY);
+      
+      filteredEdges = binImage;
+      for (int i = 0; i < temps.size(); i++) 
+      {
+        filteredEdges += temps.at(i);
+      }
+
+      old_edges.pop_front();
+      old_edges.push_back(edges.clone());
+    } 
+    else 
+    {
+      for (int i = 0; i < EDGE_HISTORY; i++)
+      {
+        old_edges.push_back(edges.clone());
+      }
+    }
+
     std::vector<cv::Vec4i> lines;
-    cv::HoughLinesP(useful, lines, 1, CV_PI/180, 50, 50, 10);
+    cv::HoughLinesP(filteredEdges, lines, 1, CV_PI/180, 50, 50, 10);
     cv::Point prev1;
     cv::Point prev2;
-    for (size_t i = 0; i < lines.size() && i < 4; i++)
+    std::vector<Line> projectedlines;
+    for (size_t i = 0; i < lines.size(); i++)
     {
       cv::Point point1 = cv::Point(lines[i][0], lines[i][1]);
       cv::Point point2 = cv::Point(lines[i][2], lines[i][3]);
+      Line line = Line();
+      line.point1 = point1;
+      line.point2 = point2;
+      projectedlines.push_back(line);
       if (i != 0) 
       {
         std::vector<cv::Point> ROI_Poly;
@@ -178,10 +236,12 @@ public:
         //cv::approxPolyDP(vertices, ROI_Poly, 1.0, true);
         //cv::fillConvexPoly(src, &ROI_Poly[0], ROI_Poly.size(), 255-(i%2)*255, 8, 0);
       }
-      cv::line(src, point1, point2, 
-        cv::Scalar(0,0,255), 2, 8);
       prev1 = point2;
       prev2 = point1;      
+    }
+    
+    for (size_t i = 0; i < projectedlines.size(); i++) {
+      cv::line(src, projectedlines[i].point1, projectedlines[i].point2, cv::Scalar(0,0,255), 2, 8);
     }
     
     cv::imshow(window_name, src);
